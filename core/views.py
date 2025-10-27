@@ -2,21 +2,22 @@ import datetime
 import time
 
 import redis
-import requests
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.conf import settings
-from drf_spectacular.utils import extend_schema, OpenApiResponse
+from django.db.models import Count
+from django.utils import timezone
+from drf_spectacular.utils import extend_schema, OpenApiResponse, OpenApiParameter
 from mongoengine import DoesNotExist
 from pymongo import MongoClient
 from rest_framework import viewsets, status
-from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from core.models import User, Request
 from core.serializers import UserSerializer, RequestSerializer
-from executor_balancer.celery import app
 from dispatcher.tasks import dispatch_request
+from executor_balancer.celery import app
 
 START_TIME = datetime.datetime.now(datetime.UTC)
 
@@ -249,7 +250,7 @@ class RequestViewSet(viewsets.ViewSet):
                 },
             )
 
-            task = dispatch_request.delay({"id": str(obj.id)})
+            _ = dispatch_request.delay({"id": str(obj.id)})
 
             return Response(RequestSerializer(obj).data, status=201)
         return Response(serializer.errors, status=400)
@@ -289,3 +290,92 @@ class RequestViewSet(viewsets.ViewSet):
             return Response({"error": "Заявка не найдена"}, status=404)
         item.delete()
         return Response(status=204)
+
+
+@extend_schema(
+    tags=["Заявки"],
+    parameters=[
+        OpenApiParameter(
+            name="period",
+            description="Период: 'week' или 'month'",
+            required=True,
+            type=str,
+            enum=["week", "month"],
+        )
+    ],
+)
+class RequestStatsAPIView(APIView):
+    """
+    Возвращает статистику заказов за период.
+    GET-параметр:
+      - period: "week" или "month"
+    """
+
+    def get(self, request):
+        period = request.GET.get("period", "week")
+        now = datetime.datetime.now(datetime.UTC)
+
+        if period == "week":
+            days = 7
+        elif period == "month":
+            days = 30
+        else:
+            return Response(
+                {"error": "period должен быть 'week' или 'month'"}, status=400
+            )
+
+        start_date = now - datetime.timedelta(days=days - 1)
+
+        qs = Request.objects(created_at__gte=start_date, created_at__lte=now)
+
+        total_requests = qs.count()
+        processed_requests = qs(status="processed", user__ne=None).count()
+        accepted_requests = qs(status="accept").count()
+        rejected_requests = qs(status="reject").count()
+        awaited_requests = qs(status="await").count()
+
+        performers_stats = qs(user__ne=None).distinct("user")
+        max_requests = 0
+        min_requests = 0
+        if performers_stats:
+            counts_per_user = [qs(user=u).count() for u in performers_stats]
+            max_requests = max(counts_per_user)
+            min_requests = min(counts_per_user)
+        error = round((max_requests / min_requests) if min_requests else 0, 2)
+
+        date_list = [start_date + datetime.timedelta(days=i) for i in range(days)]
+        counts_per_day = {}
+        for d in date_list:
+            day_start = datetime.datetime(d.year, d.month, d.day, tzinfo=datetime.UTC)
+            day_end = day_start + datetime.timedelta(days=1)
+            counts_per_day[d.date()] = qs(
+                created_at__gte=day_start, created_at__lt=day_end
+            ).count()
+
+        if period == "week":
+            labels = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
+            values = [counts_per_day.get(d.date(), 0) for d in date_list]
+        else:
+            labels = [d.strftime("%d.%m") for d in date_list]
+            values = [counts_per_day.get(d.date(), 0) for d in date_list]
+
+        chart = {"labels": labels, "values": values}
+
+        data = {
+            "stats": {
+                "totalRequests": total_requests,
+                "processedRequests": processed_requests,
+                "acceptedRequests": accepted_requests,
+                "rejectedRequests": rejected_requests,
+                "awaitedRequests": awaited_requests,
+                "performers": len(performers_stats),
+            },
+            "chart": chart,
+            "workload": {
+                "max": max_requests,
+                "min": min_requests,
+                "error": error,
+            },
+        }
+
+        return Response(data)
