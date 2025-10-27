@@ -1,5 +1,8 @@
 import datetime
+
+from asgiref.sync import async_to_sync
 from celery import shared_task
+from channels.layers import get_channel_layer
 from django.conf import settings
 from mongoengine import connect, disconnect
 
@@ -71,7 +74,7 @@ def dispatch_request(self, data):
     max_height = max(heights, key=lambda h: h["height"])
 
     candidates = [
-        h for h in heights if max_height - h["height"] <= max_height * THRESHOLD_PERCENT
+        h for h in heights if max_height["height"] - h["height"] <= max_height["height"] * THRESHOLD_PERCENT
     ]
 
     most_relevant_user = min(candidates, key=lambda h: h["daily_count"])
@@ -88,5 +91,15 @@ def dispatch_request(self, data):
         request_created_at=req_created_at,
         request_updated_at=req_updated_at,
     ).save()
+    channel_layer = get_channel_layer()
+    async_to_sync(channel_layer.group_send)(
+        "dispatched",
+        {
+            "type": "request_dispatched",
+            "request_id": req_id,
+            "user_id": user_obj.username,
+            "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
+        },
+    )
 
     return {"assigned_user": str(user_id)}

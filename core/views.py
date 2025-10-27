@@ -2,6 +2,9 @@ import datetime
 import time
 
 import redis
+import requests
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 from django.conf import settings
 from drf_spectacular.utils import extend_schema, OpenApiResponse
 from mongoengine import DoesNotExist
@@ -13,6 +16,7 @@ from rest_framework.response import Response
 from core.models import User, Request
 from core.serializers import UserSerializer, RequestSerializer
 from executor_balancer.celery import app
+from dispatcher.tasks import dispatch_request
 
 START_TIME = datetime.datetime.now(datetime.UTC)
 
@@ -233,6 +237,20 @@ class RequestViewSet(viewsets.ViewSet):
         serializer = RequestSerializer(data=request.data)
         if serializer.is_valid():
             obj = serializer.save()
+
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(
+                "new_requests",
+                {
+                    "type": "new_request",
+                    "id": str(obj.id),
+                    "status": obj.status,
+                    "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
+                },
+            )
+
+            task = dispatch_request.delay({"id": str(obj.id)})
+
             return Response(RequestSerializer(obj).data, status=201)
         return Response(serializer.errors, status=400)
 
