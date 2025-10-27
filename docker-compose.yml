@@ -20,7 +20,7 @@ services:
     restart: always
 
   db:
-    container_name: postgres_db
+    container_name: db
     image: postgres:16-alpine
     env_file:
       - .env

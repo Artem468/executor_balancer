@@ -22,3 +22,4 @@ class DispatcherView(APIView):
 
         task = dispatch_request.delay(request.data)
         return Response({"task_id": task.id}, status=status.HTTP_202_ACCEPTED)
+

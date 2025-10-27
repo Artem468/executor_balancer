@@ -4,12 +4,13 @@ import requests
 from celery import shared_task
 from django.conf import settings
 
+from dispatcher.models import DispatchLogs
+
 
 @shared_task(bind=True)
 def dispatch_request(self, data):
     req_id = data["id"]
     req_parent_id = data["parent_id"]
-    req_status = data["status"]
     req_params = data["params"]
     req_created_at = data["created_at"]
     req_updated_at = data["updated_at"]
@@ -73,5 +74,13 @@ def dispatch_request(self, data):
         }
     )
     _up.raise_for_status()
+
+    _ = DispatchLogs.objects.create(
+        request_id=req_id,
+        parent_id=req_parent_id,
+        task_id=self.request.id,
+        request_updated_at=req_updated_at,
+        request_created_at=req_created_at,
+    )
 
     return int(most_relevant_user["id"])
