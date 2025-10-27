@@ -16,6 +16,7 @@ from executor_balancer.celery import app
 
 START_TIME = datetime.datetime.now(datetime.UTC)
 
+
 class HealthCheckView(APIView):
     """
     DRF health-check endpoint.
@@ -125,7 +126,10 @@ class UserViewSet(viewsets.ViewSet):
     @extend_schema(
         summary="Получить пользователя по ID",
         description="Возвращает информацию о конкретном пользователе по его ID.",
-        responses={200: UserSerializer, 404: OpenApiResponse(description="Пользователь не найден")},
+        responses={
+            200: UserSerializer,
+            404: OpenApiResponse(description="Пользователь не найден"),
+        },
     )
     def retrieve(self, request, pk=None):
         try:
@@ -138,7 +142,10 @@ class UserViewSet(viewsets.ViewSet):
         summary="Создать пользователя",
         description="Создаёт нового пользователя в системе.",
         request=UserSerializer,
-        responses={201: UserSerializer, 400: OpenApiResponse(description="Ошибка валидации")},
+        responses={
+            201: UserSerializer,
+            400: OpenApiResponse(description="Ошибка валидации"),
+        },
     )
     def create(self, request):
         serializer = UserSerializer(data=request.data)
@@ -151,7 +158,10 @@ class UserViewSet(viewsets.ViewSet):
         summary="Обновить пользователя",
         description="Частично обновляет данные пользователя.",
         request=UserSerializer,
-        responses={200: UserSerializer, 404: OpenApiResponse(description="Пользователь не найден")},
+        responses={
+            200: UserSerializer,
+            404: OpenApiResponse(description="Пользователь не найден"),
+        },
     )
     def update(self, request, pk=None):
         try:
@@ -167,8 +177,10 @@ class UserViewSet(viewsets.ViewSet):
     @extend_schema(
         summary="Удалить пользователя",
         description="Удаляет пользователя по ID.",
-        responses={204: OpenApiResponse(description="Пользователь удалён"),
-                   404: OpenApiResponse(description="Пользователь не найден")},
+        responses={
+            204: OpenApiResponse(description="Пользователь удалён"),
+            404: OpenApiResponse(description="Пользователь не найден"),
+        },
     )
     def destroy(self, request, pk=None):
         try:
@@ -196,7 +208,10 @@ class RequestViewSet(viewsets.ViewSet):
     @extend_schema(
         summary="Получить заявку по ID",
         description="Возвращает данные конкретной заявки по ID.",
-        responses={200: RequestSerializer, 404: OpenApiResponse(description="Заявка не найдена")},
+        responses={
+            200: RequestSerializer,
+            404: OpenApiResponse(description="Заявка не найдена"),
+        },
     )
     def retrieve(self, request, pk=None):
         try:
@@ -209,7 +224,10 @@ class RequestViewSet(viewsets.ViewSet):
         summary="Создать заявку",
         description="Создаёт новую заявку в системе.",
         request=RequestSerializer,
-        responses={201: RequestSerializer, 400: OpenApiResponse(description="Ошибка валидации")},
+        responses={
+            201: RequestSerializer,
+            400: OpenApiResponse(description="Ошибка валидации"),
+        },
     )
     def create(self, request):
         serializer = RequestSerializer(data=request.data)
@@ -222,7 +240,10 @@ class RequestViewSet(viewsets.ViewSet):
         summary="Обновить заявку",
         description="Частично обновляет поля заявки.",
         request=RequestSerializer,
-        responses={200: RequestSerializer, 404: OpenApiResponse(description="Заявка не найдена")},
+        responses={
+            200: RequestSerializer,
+            404: OpenApiResponse(description="Заявка не найдена"),
+        },
     )
     def update(self, request, pk=None):
         try:
@@ -238,8 +259,10 @@ class RequestViewSet(viewsets.ViewSet):
     @extend_schema(
         summary="Удалить заявку",
         description="Удаляет заявку по ID.",
-        responses={204: OpenApiResponse(description="Заявка удалена"),
-                   404: OpenApiResponse(description="Заявка не найдена")},
+        responses={
+            204: OpenApiResponse(description="Заявка удалена"),
+            404: OpenApiResponse(description="Заявка не найдена"),
+        },
     )
     def destroy(self, request, pk=None):
         try:

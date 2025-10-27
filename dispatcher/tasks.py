@@ -1,8 +1,10 @@
 import datetime
 from celery import shared_task
+from django.conf import settings
+from mongoengine import connect, disconnect
 
 from dispatcher.models import DispatchLogs
-from core.models import  Request, User
+from core.models import Request, User
 
 
 @shared_task(bind=True)
@@ -10,6 +12,16 @@ def dispatch_request(self, data):
     """
     Функция распределения заявок
     """
+    try:
+        disconnect(alias="default")
+    except Exception:
+        pass
+
+    connect(
+        db=settings.MONGO_DB,
+        host=f"mongodb://{settings.MONGO_USER}:{settings.MONGO_PASS}@{settings.MONGO_HOST}:{settings.MONGO_PORT}/",
+        authentication_source="admin",
+    )
 
     req_id = data.get("id")
     if not req_id:
@@ -24,7 +36,7 @@ def dispatch_request(self, data):
     req_created_at = request_obj.created_at
     req_updated_at = request_obj.updated_at
 
-    users = User.objects.only("id", "params", "maxDailyRequests")
+    users = User.objects.only("id", "params", "max_daily_requests")
 
     now = datetime.datetime.now(datetime.UTC)
 
@@ -34,10 +46,13 @@ def dispatch_request(self, data):
         daily_count = Request.objects(
             user=user,
             status="processed",
-            created_at__gte=now.replace(hour=0, minute=0, second=0, microsecond=0)
+            created_at__gte=now.replace(hour=0, minute=0, second=0, microsecond=0),
         ).count()
 
-        if user.maxDailyRequests is not None and daily_count >= user.maxDailyRequests:
+        if (
+            user.max_daily_requests is not None
+            and daily_count >= user.max_daily_requests
+        ):
             continue
 
         height = 0
@@ -48,21 +63,13 @@ def dispatch_request(self, data):
         heights.append({"id": user.id, "height": height})
 
     if not heights:
-        DispatchLogs(
-            request_id=req_id,
-            parent_id=req_parent_id,
-            task_id=self.request.id,
-            request_created_at=req_created_at,
-            request_updated_at=req_updated_at,
-        ).save()
         return {"status": "no suitable users"}
 
     most_relevant_user = max(heights, key=lambda h: h["height"])
     user_id = most_relevant_user["id"]
 
-    request_obj.user = User.objects(id=user_id).first()
-    request_obj.status = "assigned"
-    request_obj.save()
+    user_obj = User.objects(id=user_id).first()
+    Request.objects(id=req_id).update(set__user=user_obj)
 
     DispatchLogs(
         request_id=req_id,
@@ -72,4 +79,4 @@ def dispatch_request(self, data):
         request_updated_at=req_updated_at,
     ).save()
 
-    return {"assigned_user": int(user_id)}
+    return {"assigned_user": str(user_id)}

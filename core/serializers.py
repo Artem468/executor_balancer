@@ -31,7 +31,15 @@ class RequestSerializer(serializers.Serializer):
     parent = serializers.CharField(required=False, allow_null=True)
     params = serializers.DictField(required=False)
     text = serializers.CharField(required=False, allow_blank=True)
-    status = serializers.CharField(required=False)
+    status = serializers.ChoiceField(
+        required=False,
+        choices=[
+            ("processed", "Processed"),
+            ("await", "Await"),
+            ("accept", "Accept"),
+            ("reject", "Reject"),
+        ],
+    )
     created_at = serializers.DateTimeField(read_only=True)
     updated_at = serializers.DateTimeField(read_only=True)
 
