@@ -1,10 +1,10 @@
 import datetime
 import time
 
-import psycopg2
 import redis
 from django.conf import settings
 from drf_spectacular.utils import extend_schema
+from pymongo import MongoClient
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -18,7 +18,7 @@ class HealthCheckView(APIView):
     DRF health-check endpoint.
     Проверяет состояние:
     - Django
-    - PostgreSQL
+    - MongoDB
     - Redis
     - RabbitMQ
     - Celery worker
@@ -41,21 +41,22 @@ class HealthCheckView(APIView):
 
         try:
             start = time.time()
-            conn = psycopg2.connect(
-                dbname=settings.DATABASES["default"]["NAME"],
-                user=settings.DATABASES["default"]["USER"],
-                password=settings.DATABASES["default"]["PASSWORD"],
-                host=settings.DATABASES["default"]["HOST"],
-                port=settings.DATABASES["default"]["PORT"],
-                connect_timeout=2,
+            mongo_uri = (
+                f"mongodb://{settings.MONGO_USER}:{settings.MONGO_PASS}@"
+                f"{settings.MONGO_HOST}:{settings.MONGO_PORT}/"
+                f"{settings.MONGO_DB}"
             )
-            conn.close()
-            results["postgres"] = {
-                "status": "ok",
-                "latency_ms": round((time.time() - start) * 1000, 2),
-            }
+            client = MongoClient(
+                mongo_uri,
+                serverSelectionTimeoutMS=2000,
+                authSource="admin",
+            )
+            client.admin.command("ping")
+            latency = round((time.time() - start) * 1000, 2)
+            results["mongodb"] = {"status": "ok", "latency_ms": latency}
+            client.close()
         except Exception as e:
-            results["postgres"] = {"status": f"error: {e}"}
+            results["mongodb"] = {"status": f"error: {e}"}
 
         try:
             start = time.time()

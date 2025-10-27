@@ -1,86 +1,75 @@
 import datetime
-
-import requests
 from celery import shared_task
-from django.conf import settings
 
 from dispatcher.models import DispatchLogs
+from core.models import  Request, User
 
 
 @shared_task(bind=True)
 def dispatch_request(self, data):
-    req_id = data["id"]
-    req_parent_id = data["parent_id"]
-    req_params = data["params"]
-    req_created_at = data["created_at"]
-    req_updated_at = data["updated_at"]
-
-    query = """
-        query GetUsers($paramsFilter: [JSONFilterInput!], $createdAt: DateTime!) {
-          users(paramsFilter: $paramsFilter) {
-            id
-            params
-            maxDailyRequests
-            requestCount(status: "processed", createdAt: $createdAt)
-          }
-        }
+    """
+    Функция распределения заявок
     """
 
-    variables = {
-        "paramsFilter": [{"key": k, "value": v[0]} for k, v in req_params.items()],
-        "createdAt": datetime.datetime.now(datetime.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    }
+    req_id = data.get("id")
+    if not req_id:
+        return {"error": "request_id not provided"}
 
-    response = requests.post(
-        url=f"{settings.AIS_URL}/graphql/",
-        json={
-            "query": query,
-            "variables": variables,
-        }
-    )
+    request_obj = Request.objects(id=req_id).first()
+    if not request_obj:
+        return {"error": f"Request {req_id} not found"}
 
-    response.raise_for_status()
-    data = response.json()["data"]["users"]
+    req_parent_id = request_obj.parent.id if request_obj.parent else None
+    req_params = request_obj.params or {}
+    req_created_at = request_obj.created_at
+    req_updated_at = request_obj.updated_at
 
-    heights = [
-        {
-            "id": item["id"],
-            "height": sum([v[1] * 1 if item["params"].get(k) else 0 for k, v in req_params.items()])
-        } for item in data if
-        item["maxDailyRequests"] is None or item["maxDailyRequests"] < item["requestCountByStatus"]
-    ]
+    users = User.objects.only("id", "params", "maxDailyRequests")
 
-    most_relevant_user = max(heights, key=lambda height: height["height"])
+    now = datetime.datetime.now(datetime.UTC)
 
-    query = """
-        mutation UpdateRequest($id: ID!, $userId: Int) {
-          updateRequest(id: $id, userId: $userId) {
-            request {
-              id
-            }
-          }
-        }
-    """
-    variables = {
-        "id": int(req_id),
-        "userId": int(most_relevant_user["id"])
-    }
+    heights = []
 
-    _up = requests.post(
-        url=f"{settings.AIS_URL}/graphql/",
-        json={
-            "query": query,
-            "variables": variables,
-        }
-    )
-    _up.raise_for_status()
+    for user in users:
+        daily_count = Request.objects(
+            user=user,
+            status="processed",
+            created_at__gte=now.replace(hour=0, minute=0, second=0, microsecond=0)
+        ).count()
 
-    _ = DispatchLogs.objects.create(
+        if user.maxDailyRequests is not None and daily_count >= user.maxDailyRequests:
+            continue
+
+        height = 0
+        for k, v in req_params.items():
+            if user.params.get(k) == v[0]:
+                height += v[1] if isinstance(v, (list, tuple)) and len(v) > 1 else 1
+
+        heights.append({"id": user.id, "height": height})
+
+    if not heights:
+        DispatchLogs(
+            request_id=req_id,
+            parent_id=req_parent_id,
+            task_id=self.request.id,
+            request_created_at=req_created_at,
+            request_updated_at=req_updated_at,
+        ).save()
+        return {"status": "no suitable users"}
+
+    most_relevant_user = max(heights, key=lambda h: h["height"])
+    user_id = most_relevant_user["id"]
+
+    request_obj.user = User.objects(id=user_id).first()
+    request_obj.status = "assigned"
+    request_obj.save()
+
+    DispatchLogs(
         request_id=req_id,
         parent_id=req_parent_id,
         task_id=self.request.id,
-        request_updated_at=req_updated_at,
         request_created_at=req_created_at,
-    )
+        request_updated_at=req_updated_at,
+    ).save()
 
-    return int(most_relevant_user["id"])
+    return {"assigned_user": int(user_id)}

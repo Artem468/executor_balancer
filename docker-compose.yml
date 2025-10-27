@@ -12,23 +12,27 @@ services:
     env_file:
       - .env
     depends_on:
-      - db
+      - mongo
       - redis
       - rabbitmq
     ports:
       - "8000:8000"
     restart: always
 
-  db:
-    container_name: db
-    image: postgres:16-alpine
+  mongo:
+    container_name: mongo
+    image: mongo:7
+    restart: always
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
     env_file:
       - .env
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
-    restart: always
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASS}
+      MONGO_INITDB_DATABASE: executor_balancer
 
   redis:
     container_name: redis_cache
@@ -85,6 +89,6 @@ services:
     restart: always
 
 volumes:
-  postgres_data:
+  mongo_data:
   redis_data:
   rabbitmq_data:
