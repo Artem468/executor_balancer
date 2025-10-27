@@ -1,0 +1,90 @@
+services:
+  django:
+    container_name: django_app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: >
+      sh -c "python manage.py migrate &&
+             daphne -b 0.0.0.0 -p 8000 executor_balancer.asgi:application"
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    depends_on:
+      - db
+      - redis
+      - rabbitmq
+    ports:
+      - "8000:8000"
+    restart: always
+
+  db:
+    container_name: postgres_db
+    image: postgres:16-alpine
+    env_file:
+      - .env
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: always
+
+  redis:
+    container_name: redis_cache
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: always
+
+  rabbitmq:
+    container_name: rabbitmq_broker
+    image: rabbitmq:3-management-alpine
+    env_file:
+      - .env
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    restart: always
+
+  celery:
+    container_name: celery_worker
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: celery -A executor_balancer worker --loglevel=INFO
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    depends_on:
+      - django
+      - redis
+      - rabbitmq
+    restart: always
+
+  celery_beat:
+    container_name: celery_beat
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: celery -A executor_balancer beat --loglevel=INFO
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    depends_on:
+      - django
+      - redis
+      - rabbitmq
+    restart: always
+
+volumes:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:

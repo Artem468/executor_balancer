@@ -1,0 +1,21 @@
+[project]
+name = "executor-balancer"
+version = "0.1.0"
+description = "Executor balancer for hakaton"
+requires-python = ">=3.12"
+dependencies = [
+    "celery>=5.5.3",
+    "celery-types>=0.23.0",
+    "channels>=4.3.1",
+    "channels-redis>=4.3.0",
+    "daphne>=4.2.1",
+    "django>=4.2.25",
+    "django-cors-headers>=4.9.0",
+    "django-redis>=6.0.0",
+    "djangorestframework>=3.16.1",
+    "djangorestframework-simplejwt>=5.5.1",
+    "drf-spectacular>=0.28.0",
+    "openpyxl>=3.1.5",
+    "psycopg2-binary>=2.9.11",
+    "python-dotenv>=1.2.0",
+]
