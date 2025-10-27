@@ -30,6 +30,7 @@ DEBUG = os.getenv("DEBUG", "False").lower() in ("true", "1", "yes")
 
 ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "*").split(",")
 
+AIS_URL = os.getenv("AIS_URL")
 
 # Application definition
 
@@ -45,6 +46,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "core.apps.CoreConfig",
+    "dispatcher.apps.DispatcherConfig"
 ]
 
 MIDDLEWARE = [
