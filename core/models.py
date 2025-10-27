@@ -9,6 +9,7 @@ from mongoengine import (
 )
 import datetime
 
+# TODO! Модель в которой храниться ключ и тип данных для последующей десерелизации в запросах
 
 class User(Document):
     """

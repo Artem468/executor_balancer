@@ -6,6 +6,7 @@ from mongoengine import connect, disconnect
 from dispatcher.models import DispatchLogs
 from core.models import Request, User
 
+THRESHOLD_PERCENT = 0.05
 
 @shared_task(bind=True)
 def dispatch_request(self, data):
@@ -36,36 +37,45 @@ def dispatch_request(self, data):
     req_created_at = request_obj.created_at
     req_updated_at = request_obj.updated_at
 
-    users = User.objects.only("id", "params", "max_daily_requests")
-
     now = datetime.datetime.now(datetime.UTC)
 
+    pipeline = [
+        {"$match": {"status": "processed", "created_at": {"$gte": now}}},
+        {"$group": {"_id": "$user", "daily_count": {"$sum": 1}}},
+    ]
+
+    user_counts = {
+        doc["_id"]: doc["daily_count"] for doc in Request.objects.aggregate(*pipeline)
+    }
+
     heights = []
-
-    for user in users:
-        daily_count = Request.objects(
-            user=user,
-            status="processed",
-            created_at__gte=now.replace(hour=0, minute=0, second=0, microsecond=0),
-        ).count()
-
+    for user in User.objects.only("id", "params", "max_daily_requests"):
+        daily_count = user_counts.get(user.id, 0)
         if (
             user.max_daily_requests is not None
             and daily_count >= user.max_daily_requests
         ):
             continue
 
-        height = 0
-        for k, v in req_params.items():
-            if user.params.get(k) == v[0]:
-                height += v[1] if isinstance(v, (list, tuple)) and len(v) > 1 else 1
+        height = sum(
+            (v[1] if isinstance(v, (list, tuple)) and len(v) > 1 else 1)
+            for k, v in req_params.items()
+            if user.params.get(k) == v[0]
+        )
 
-        heights.append({"id": user.id, "height": height})
+        heights.append({"id": user.id, "height": height, "daily_count": daily_count})
 
     if not heights:
         return {"status": "no suitable users"}
 
-    most_relevant_user = max(heights, key=lambda h: h["height"])
+    max_height = max(heights, key=lambda h: h["height"])
+
+    candidates = [
+        h for h in heights if max_height - h["height"] <= max_height * THRESHOLD_PERCENT
+    ]
+
+    most_relevant_user = min(candidates, key=lambda h: h["daily_count"])
+
     user_id = most_relevant_user["id"]
 
     user_obj = User.objects(id=user_id).first()
