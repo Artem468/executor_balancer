@@ -70,7 +70,7 @@ def dispatch_request(
     best_user_id = best_candidate.user_id
 
     try:
-        best_user = User.objects.only('id').get(id=best_user_id)
+        best_user = User.objects.only('id', 'username').get(id=best_user_id)
     except User.DoesNotExist:
         logger.error(f"User {best_user_id} not found")
         return None
@@ -84,6 +84,7 @@ def dispatch_request(
     parent_id = str(request.parent.id) if request.parent else None
     DispatchLogs.objects.create(
         request_id=str(request.id),
+        user_id=str(best_user.username),
         task_id=uuid.UUID(self.request.id),
         parent_id=parent_id,
         request_created_at=request.created_at,

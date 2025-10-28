@@ -15,6 +15,7 @@ class DispatchLogs(Document):
     """
 
     request_id = StringField(required=True)
+    user_id = StringField(required=True)
     task_id = UUIDField(binary=False, default=uuid.uuid4)
     parent_id = StringField(null=True)
     request_created_at = DateTimeField(default=datetime.datetime.now(datetime.UTC))

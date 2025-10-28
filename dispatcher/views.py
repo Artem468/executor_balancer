@@ -127,8 +127,8 @@ class ExportDispatchSummaryExcelView(APIView):
         end_date_str = request.GET.get("end_date")
 
         try:
-            start_date = _parse_date_param(start_date_str)
-            end_date = _parse_date_param(end_date_str)
+            start_date = _parse_date_param(start_date_str) if start_date_str else None
+            end_date = _parse_date_param(end_date_str) if end_date_str else None
         except ValueError:
             return Response(
                 {"error": "Неверный формат даты. Используйте YYYY-MM-DD."},
@@ -137,27 +137,44 @@ class ExportDispatchSummaryExcelView(APIView):
 
         summary = DispatchLogs.daily_summary(start_date=start_date, end_date=end_date)
 
+        logs_qs = DispatchLogs.objects
+        if start_date:
+            logs_qs = logs_qs.filter(
+                request_created_at__gte=datetime.datetime.combine(start_date, datetime.time.min)
+            )
+        if end_date:
+            logs_qs = logs_qs.filter(
+                request_created_at__lte=datetime.datetime.combine(end_date, datetime.time.max)
+            )
+        logs = list(logs_qs.order_by("request_created_at"))
+
         wb = Workbook()
-        ws = wb.active
-        ws.title = "Daily Summary"
+        ws1 = wb.active
+        ws1.title = "Выгрузка по датам"
 
-        headers = ["Дата", "Количество заявок"]
-        ws.append(headers)
-
+        ws1.append(["Дата", "Количество заявок"])
         total = 0
         for row in summary:
-            ws.append([row.get("date"), row.get("count", 0)])
+            ws1.append([row.get("date"), row.get("count", 0)])
             total += int(row.get("count", 0))
 
-        ws.append([])
-        ws.append(["Итого", total])
+        ws1.append([])
+        ws1.append(["Итого", total])
 
-        for i, column_cells in enumerate(ws.columns, 1):
-            length = max(
-                (len(str(cell.value)) if cell.value is not None else 0)
-                for cell in column_cells
-            )
-            ws.column_dimensions[get_column_letter(i)].width = min(50, length + 2)
+        ws2 = wb.create_sheet("Логи")
+        ws2.append(["ID заявки", "ID пользователя", "Записано в"])
+
+        for log in logs:
+            ws2.append([
+                log.request_id,
+                log.user_id,
+                log.request_created_at.strftime("%d.%m.%Y %H:%M:%S"),
+            ])
+
+        for sheet in (ws1, ws2):
+            for i, col in enumerate(sheet.columns, 1):
+                length = max(len(str(cell.value)) if cell.value else 0 for cell in col)
+                sheet.column_dimensions[get_column_letter(i)].width = min(50, length + 2)
 
         output = io.BytesIO()
         wb.save(output)
@@ -165,11 +182,11 @@ class ExportDispatchSummaryExcelView(APIView):
 
         sd = start_date_str or "from_begin"
         ed = end_date_str or "to_now"
-        filename = f"dispatch_summary_{sd}_{ed}.xlsx"
+        filename = f"dispatch_full_{sd}_{ed}.xlsx"
 
         response = HttpResponse(
             output.getvalue(),
             content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        response["Content-Disposition"] = f'attachment; filename=\"{filename}\"'
         return response
