@@ -66,3 +66,14 @@ def validate_and_cast_params(params: dict) -> dict:
         }
 
     return validated
+
+
+def cast_params(params: dict) -> dict:
+    key_types = {k.name: k.type_of for k in KeyDataTypes.objects.all()}
+    validated = {}
+
+    for key, value in params.items():
+        type_name = key_types.get(key, "string")
+        validated[key] = cast_param_value(value, type_name)
+
+    return validated

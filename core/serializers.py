@@ -2,7 +2,7 @@ from django.core.exceptions import ValidationError
 from rest_framework import serializers
 
 from core.models import User, Request, KeyDataTypes
-from core.utils import validate_and_cast_params
+from core.utils import validate_and_cast_params, cast_params
 
 
 class UserSerializer(serializers.Serializer):
@@ -18,7 +18,7 @@ class UserSerializer(serializers.Serializer):
     def validate_params(self, value):
         """Автоматически привести типы из KeyDataTypes"""
         try:
-            return validate_and_cast_params(value)
+            return cast_params(value)
         except ValidationError as e:
             raise serializers.ValidationError(str(e))
 
