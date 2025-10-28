@@ -41,6 +41,11 @@ AUTHENTICATION_BACKENDS = ("django_mongoengine.mongo_auth.backends.MongoEngineBa
 
 SESSION_ENGINE = "django_mongoengine.sessions"
 
+CORS_ALLOWED_ORIGINS = [
+    "https://ais.twc1.net",
+    "http://127.0.0.1:8000",
+    "http://localhost:3000",
+]
 
 # Application definition
 
@@ -51,6 +56,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "django.contrib.admin",
+    "corsheaders",
     "django_mongoengine",
     "django_mongoengine.mongo_auth",
     "django_mongoengine.mongo_admin",
@@ -63,6 +69,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",

@@ -19,17 +19,19 @@ from django.urls import path, include
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 from rest_framework.routers import DefaultRouter
 
-from core.views import UserViewSet, RequestViewSet
+from core.views import UserViewSet, RequestViewSet, KeyDataTypesViewSet
+from dispatcher.views import ExportDispatchSummaryExcelView
 
 router = DefaultRouter()
 router.register(r'users', UserViewSet, basename='user')
 router.register(r'requests', RequestViewSet, basename='request')
-
+router.register(r'dataTypes', KeyDataTypesViewSet, basename='dataTypes')
 
 urlpatterns = [
     path('core/', include('core.urls')),
     path('api/dispatch/', include('dispatcher.urls')),
     path('api/', include(router.urls)),
+    path('export/logs', ExportDispatchSummaryExcelView.as_view(), name='export-logs'),
     path(
         "schema/",
         SpectacularAPIView.as_view(),

@@ -1,3 +1,5 @@
+import datetime
+
 from mongoengine import (
     Document,
     StringField,
@@ -7,9 +9,22 @@ from mongoengine import (
     DateTimeField,
     CASCADE,
 )
-import datetime
 
-# TODO! Модель в которой храниться ключ и тип данных для последующей десерелизации в запросах
+
+class KeyDataTypes(Document):
+    """
+    Типы данных полей
+    """
+    TYPE_OF_CHOICES = ("string", "integer", "float", "boolean", "datetime")
+
+    name = StringField(required=True, unique=True, verbose_name="Название ключа")
+    type_of = StringField(
+        choices=TYPE_OF_CHOICES,
+        default="string",
+        required=True,
+        verbose_name="Тип данных",
+    )
+
 
 class User(Document):
     """

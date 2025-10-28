@@ -11,7 +11,7 @@ from mongoengine import (
 
 class DispatchLogs(Document):
     """
-    Логи выполнения задач (аналог Django модели, но для MongoDB).
+    Логи выполнения задач
     """
 
     request_id = StringField(required=True)

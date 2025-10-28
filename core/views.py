@@ -14,8 +14,8 @@ from rest_framework import viewsets, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from core.models import User, Request
-from core.serializers import UserSerializer, RequestSerializer
+from core.models import User, Request, KeyDataTypes
+from core.serializers import UserSerializer, RequestSerializer, KeyDataTypesSerializer
 from dispatcher.tasks import dispatch_request
 from executor_balancer.celery import app
 
@@ -289,6 +289,92 @@ class RequestViewSet(viewsets.ViewSet):
         except DoesNotExist:
             return Response({"error": "Заявка не найдена"}, status=404)
         item.delete()
+        return Response(status=204)
+
+
+@extend_schema(tags=["Типы данных"])
+class KeyDataTypesViewSet(viewsets.ViewSet):
+    """
+    CRUD для типов данных ключей
+    """
+
+    @extend_schema(
+        summary="Получить список типов данных",
+        description="Возвращает все доступные типы данных ключей.",
+        responses={200: KeyDataTypesSerializer(many=True)},
+    )
+    def list(self, request):
+        objs = KeyDataTypes.objects.all()
+        serializer = KeyDataTypesSerializer(objs, many=True)
+        return Response(serializer.data)
+
+    @extend_schema(
+        summary="Получить конкретный тип данных",
+        description="Возвращает информацию о типе данных по его ID.",
+        responses={
+            200: KeyDataTypesSerializer,
+            404: OpenApiResponse(description="Тип данных не найден"),
+        },
+    )
+    def retrieve(self, request, pk=None):
+        try:
+            obj = KeyDataTypes.objects.get(id=pk)
+        except KeyDataTypes.DoesNotExist:
+            return Response({"detail": "Not found"}, status=404)
+        serializer = KeyDataTypesSerializer(obj)
+        return Response(serializer.data)
+
+    @extend_schema(
+        summary="Создать тип данных",
+        description="Создаёт новый тип данных для ключей параметров.",
+        request=KeyDataTypesSerializer,
+        responses={
+            201: KeyDataTypesSerializer,
+            400: OpenApiResponse(description="Ошибка валидации"),
+        },
+    )
+    def create(self, request):
+        serializer = KeyDataTypesSerializer(data=request.data)
+        if serializer.is_valid():
+            obj = serializer.save()
+            return Response(KeyDataTypesSerializer(obj).data, status=201)
+        return Response(serializer.errors, status=400)
+
+    @extend_schema(
+        summary="Обновить тип данных",
+        description="Обновляет запись типа данных по ID.",
+        request=KeyDataTypesSerializer,
+        responses={
+            200: KeyDataTypesSerializer,
+            400: OpenApiResponse(description="Ошибка валидации"),
+            404: OpenApiResponse(description="Тип данных не найден"),
+        },
+    )
+    def update(self, request, pk=None):
+        try:
+            item = KeyDataTypes.objects.get(id=pk)
+        except DoesNotExist:
+            return Response({"error": "Заявка не найдена"}, status=404)
+        serializer = KeyDataTypesSerializer(item, data=request.data, partial=True)
+        if serializer.is_valid():
+            obj = serializer.save()
+            return Response(KeyDataTypesSerializer(obj).data)
+        return Response(serializer.errors, status=400)
+
+    @extend_schema(
+        summary="Удалить тип данных",
+        description="Удаляет тип данных по ID.",
+        responses={
+            204: OpenApiResponse(description="Успешное удаление"),
+            404: OpenApiResponse(description="Тип данных не найден"),
+        },
+    )
+    def destroy(self, request, pk=None):
+        try:
+            obj = KeyDataTypes.objects.get(id=pk)
+        except KeyDataTypes.DoesNotExist:
+            return Response({"detail": "Not found"}, status=404)
+        obj.delete()
         return Response(status=204)
 
 

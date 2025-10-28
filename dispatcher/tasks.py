@@ -16,16 +16,6 @@ def dispatch_request(self, data):
     """
     Функция распределения заявок
     """
-    try:
-        disconnect(alias="default")
-    except Exception:
-        pass
-
-    connect(
-        db=settings.MONGO_DB,
-        host=f"mongodb://{settings.MONGO_USER}:{settings.MONGO_PASS}@{settings.MONGO_HOST}:{settings.MONGO_PORT}/",
-        authentication_source="admin",
-    )
 
     req_id = data.get("id")
     if not req_id:
