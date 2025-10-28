@@ -1,25 +1,33 @@
 import os
 import traceback
-
 from celery import Celery
 from celery.signals import worker_process_init
 from django.conf import settings
 from mongoengine import disconnect, connect
 
-# Set the default Django settings module for the 'celery' program.
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'executor_balancer.settings')
-
 app = Celery('executor_balancer')
 
-# Using a string here means the worker doesn't have to serialize
-# the configuration object to child processes.
-# - namespace='CELERY' means all celery-related configuration keys
-#   should have a `CELERY_` prefix.
+app.conf.update(
+    task_routes={
+        'dispatcher.tasks.dispatch_request': {'queue': 'dispatch_queue'},
+    },
+    worker_prefetch_multiplier=1,
+    task_acks_late=True,
+    task_reject_on_worker_lost=True,
+    task_serializer='json',
+    accept_content=['json'],
+    result_serializer='json',
+    task_track_started=True,
+    task_compression='gzip',
+    result_compression='gzip',
+    task_soft_time_limit=30,
+    worker_max_memory_per_child=150000,
+    broker_transport_options={'visibility_timeout': 43200}
+)
+
 app.config_from_object('django.conf:settings', namespace='CELERY')
-
-# Load task modules from all registered Django apps.
 app.autodiscover_tasks()
-
 
 @worker_process_init.connect
 def init_mongo(**kwargs):

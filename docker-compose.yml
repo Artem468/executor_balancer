@@ -61,7 +61,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: celery -A executor_balancer worker --loglevel=INFO
+    command: celery -A executor_balancer worker --loglevel=INFO -Q dispatch_queue -c 1
     volumes:
       - .:/app
     env_file:

@@ -119,20 +119,35 @@ class UserScorer:
         max_daily_requests: Optional[int]
     ) -> 'CandidateInfo':
         """
-        Создает запасного кандидата для случая, когда нет подходящих по параметрам.
-        Использует только информацию о нагрузке.
+        Создает запасного кандидата для случая, когда нет подходящих по параметрам
+        или для заявок без параметров. Использует только информацию о нагрузке.
         """
+        from .candidate_info import CandidateInfo
         return CandidateInfo(
             user_id=user_id,
             total_score=0.0,
             max_score=0.0,
             daily_requests=daily_requests,
             max_daily_requests=max_daily_requests,
+            is_fallback=True
         )
 
 
 class LoadBalancer:
     """Класс для балансировки нагрузки между пользователями"""
+
+    @staticmethod
+    def calculate_relative_load(daily_requests: int, max_daily_requests: Union[int, None]) -> float:
+        """
+        Вычисляет относительную нагрузку пользователя
+        Возвращает значение от 0 до 1, где меньшее значение означает меньшую нагрузку
+        """
+        if max_daily_requests is None or max_daily_requests == 0:
+            base_load = daily_requests / (daily_requests + 1)
+            return 1.0 - (1.0 - base_load) ** 3
+        else:
+            load_ratio = daily_requests / max_daily_requests
+            return load_ratio ** 3
 
     @staticmethod
     def calculate_load_factor(
@@ -143,7 +158,7 @@ class LoadBalancer:
         ignore_score: bool = False
     ) -> float:
         """
-        Вычисляет фактор нагрузки пользователя
+        Вычисляет фактор нагрузки пользователя с учетом соответствия параметрам
         Возвращает значение от 0 до 1, где меньшее значение означает лучшего кандидата
         
         Args:
@@ -153,19 +168,14 @@ class LoadBalancer:
             max_possible_score: Максимально возможный счет
             ignore_score: Если True, игнорирует score и учитывает только нагрузку
         """
-        if max_daily_requests is None or max_daily_requests == 0:
-            load_factor = daily_requests / (daily_requests + 1)
-        else:
-            load_factor = daily_requests / max_daily_requests
+        load_factor = LoadBalancer.calculate_relative_load(daily_requests, max_daily_requests)
 
-        if ignore_score:
+        if ignore_score or max_possible_score == 0:
             return load_factor
 
-        score_factor = (
-            total_score / max_possible_score if max_possible_score > 0 else 1.0
-        )
+        score_factor = total_score / max_possible_score
 
-        return (0.7 * load_factor) + (0.3 * (1 - score_factor))
+        return (0.8 * load_factor) + (0.2 * (1 - score_factor))
 
     @staticmethod
     def get_fallback_load_factor(
@@ -173,10 +183,7 @@ class LoadBalancer:
         max_daily_requests: Union[int, None]
     ) -> float:
         """
-        Вычисляет фактор нагрузки для случая, когда нет подходящих по параметрам кандидатов.
-        Учитывает только количество заявок, игнорируя соответствие параметрам.
+        Вычисляет фактор нагрузки для случая, когда нет подходящих по параметрам кандидатов
+        или для заявок без параметров. Фокусируется только на балансировке нагрузки.
         """
-        if max_daily_requests is None or max_daily_requests == 0:
-            return daily_requests / (daily_requests + 1)
-        else:
-            return daily_requests / max_daily_requests
+        return LoadBalancer.calculate_relative_load(daily_requests, max_daily_requests)
