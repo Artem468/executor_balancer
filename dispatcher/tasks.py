@@ -1,5 +1,4 @@
 import datetime
-
 from asgiref.sync import async_to_sync
 from celery import shared_task
 from channels.layers import get_channel_layer
@@ -11,11 +10,33 @@ from core.models import Request, User
 
 THRESHOLD_PERCENT = 0.05
 
-@shared_task(bind=True)
+
+def match_param(user_value, req_value, operator="EQ"):
+    """Проверяет соответствие одного параметра пользователя и заявки по оператору."""
+    if user_value is None:
+        return False
+    if operator == "EQ":
+        return user_value == req_value
+    elif operator == "NE":
+        return user_value != req_value
+    elif operator == "GT":
+        return user_value > req_value
+    elif operator == "GTE":
+        return user_value >= req_value
+    elif operator == "LT":
+        return user_value < req_value
+    elif operator == "LTE":
+        return user_value <= req_value
+    elif operator == "ICONTAINS":
+        if not isinstance(user_value, str) or not isinstance(req_value, str):
+            return False
+        return req_value.lower() in user_value.lower()
+    return False
+
+
+@shared_task(bind=True, max_retries=None, default_retry_delay=300)
 def dispatch_request(self, data):
-    """
-    Функция распределения заявок
-    """
+    """Распределение заявки с учётом value, operator и веса (height)."""
 
     req_id = data.get("id")
     if not req_id:
@@ -36,39 +57,43 @@ def dispatch_request(self, data):
         {"$match": {"status": "processed", "created_at": {"$gte": now}}},
         {"$group": {"_id": "$user", "daily_count": {"$sum": 1}}},
     ]
-
-    user_counts = {
-        doc["_id"]: doc["daily_count"] for doc in Request.objects.aggregate(*pipeline)
-    }
+    user_counts = {doc["_id"]: doc["daily_count"] for doc in Request.objects.aggregate(*pipeline)}
 
     heights = []
     for user in User.objects.only("id", "params", "max_daily_requests"):
         daily_count = user_counts.get(user.id, 0)
-        if (
-            user.max_daily_requests is not None
-            and daily_count >= user.max_daily_requests
-        ):
+        if user.max_daily_requests is not None and daily_count >= user.max_daily_requests:
             continue
 
-        height = sum(
-            (v[1] if isinstance(v, (list, tuple)) and len(v) > 1 else 1)
-            for k, v in req_params.items()
-            if user.params.get(k) == v
-        )
+        total_height = 0
+        for key, param in req_params.items():
+            if not isinstance(param, dict):
+                continue
+            req_value = param.get("value")
+            operator = param.get("operator", "EQ")
+            weight = float(param.get("height", 1.0))
 
-        heights.append({"id": user.id, "height": height, "daily_count": daily_count})
+            user_value = user.params.get(key)
+            if match_param(user_value, req_value, operator):
+                total_height += weight
 
+        if total_height > 0:
+            heights.append({
+                "id": user.id,
+                "height": total_height,
+                "daily_count": daily_count
+            })
 
-    max_height = max(heights, key=lambda h: h["height"])
+    if not heights:
+        raise self.retry(countdown=60)
 
+    max_height = max(heights, key=lambda h: h["height"])["height"]
     candidates = [
-        h for h in heights if max_height["height"] - h["height"] <= max_height["height"] * THRESHOLD_PERCENT
+        h for h in heights if max_height - h["height"] <= max_height * THRESHOLD_PERCENT
     ]
-
     most_relevant_user = min(candidates, key=lambda h: h["daily_count"])
 
     user_id = most_relevant_user["id"]
-
     user_obj = User.objects(id=user_id).first()
     Request.objects(id=req_id).update(set__user=user_obj)
 
@@ -79,13 +104,14 @@ def dispatch_request(self, data):
         request_created_at=req_created_at,
         request_updated_at=req_updated_at,
     ).save()
+
     channel_layer = get_channel_layer()
     async_to_sync(channel_layer.group_send)(
         "dispatched",
         {
             "type": "request_dispatched",
             "request_id": req_id,
-            "user_id": user_obj.username,
+            "user": user_obj.username,
             "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
         },
     )

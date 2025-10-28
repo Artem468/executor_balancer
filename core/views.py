@@ -1,4 +1,5 @@
 import datetime
+import statistics
 import time
 
 import redis
@@ -11,6 +12,7 @@ from drf_spectacular.utils import extend_schema, OpenApiResponse, OpenApiParamet
 from mongoengine import DoesNotExist
 from pymongo import MongoClient
 from rest_framework import viewsets, status
+from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -115,7 +117,7 @@ class HealthCheckView(APIView):
 
 
 @extend_schema(tags=["Пользователи"])
-class UserViewSet(viewsets.ViewSet):
+class UserViewSet(viewsets.GenericViewSet):
     """CRUD для пользователей."""
 
     @extend_schema(
@@ -195,6 +197,72 @@ class UserViewSet(viewsets.ViewSet):
         user.delete()
         return Response(status=204)
 
+    @extend_schema(
+        summary="Получить все ID и username пользователей",
+        description="Возвращает список всех пользователей с их ID и количеством заявок",
+        responses={200: OpenApiResponse(description="Список пользователей с количеством заявок")}
+    )
+    @action(detail=False, methods=["get"], url_path="dispatched")
+    def dispatched(self, request):
+        """
+        Возвращает всех пользователей с ID, username и количеством их заявок.
+        """
+        pipeline = [
+            {
+                "$group": {
+                    "_id": "$user",
+                    "request_count": {"$sum": 1}
+                }
+            }
+        ]
+
+        agg_result = list(Request.objects.aggregate(*pipeline))
+
+        user_data = []
+        for entry in agg_result:
+            user_id = entry["_id"]
+            user = User.objects(id=user_id).first()
+            if user:
+                user_data.append({
+                    "id": str(user.id),
+                    "username": user.username,
+                    "request_count": entry["request_count"]
+                })
+
+        return Response(user_data)
+
+    @extend_schema(
+        summary="Получить по ID пользователя и его заявки",
+        description="Возвращает список заявок для пользователя",
+        responses={200: OpenApiResponse(description="Список заявок на пользователя")}
+    )
+    @action(detail=True, methods=["get"], url_path="dispatched")
+    def dispatched_by_user(self, request, pk=None):
+        """
+        Возвращает данные конкретного пользователя:
+        - id, username
+        - количество заявок
+        - список заявок с id и статусом
+        """
+        try:
+            user = User.objects.get(id=pk)
+        except DoesNotExist:
+            return Response({"error": "Пользователь не найден"}, status=404)
+
+        user_requests = Request.objects(user=user).only("id", "status")
+        requests_list = [
+            {"id": str(r.id), "status": r.status} for r in user_requests
+        ]
+
+        data = {
+            "id": str(user.id),
+            "username": user.username,
+            "request_count": user_requests.count(),
+            "requests": requests_list
+        }
+
+        return Response(data)
+
 
 @extend_schema(tags=["Заявки"])
 class RequestViewSet(viewsets.ViewSet):
@@ -250,7 +318,7 @@ class RequestViewSet(viewsets.ViewSet):
                 },
             )
 
-            task = dispatch_request.delay({"id": str(obj.id)})
+            _ = dispatch_request.delay({"id": str(obj.id)})
 
             return Response(RequestSerializer(obj).data, status=201)
         return Response(serializer.errors, status=400)
@@ -407,11 +475,11 @@ class RequestStatsAPIView(APIView):
             days = 30
         else:
             return Response(
-                {"error": "period должен быть 'week' или 'month'"}, status=400
+                {"error": "period должен быть 'week' или 'month'"},
+                status=400
             )
 
         start_date = now - datetime.timedelta(days=days - 1)
-
         qs = Request.objects(created_at__gte=start_date, created_at__lte=now)
 
         total_requests = qs.count()
@@ -420,13 +488,14 @@ class RequestStatsAPIView(APIView):
         rejected_requests = qs(status="reject").count()
         awaited_requests = qs(status="await").count()
 
-        performers_stats = qs(user__ne=None).distinct("user")
-        max_requests = 0
-        min_requests = 0
-        if performers_stats:
-            counts_per_user = [qs(user=u).count() for u in performers_stats]
-            max_requests = max(counts_per_user)
-            min_requests = min(counts_per_user)
+        performers = qs(user__ne=None).distinct("user")
+        user_counts = [qs(user=u).count() for u in performers] if performers else []
+
+        max_requests = max(user_counts) if user_counts else 0
+        min_requests = min(user_counts) if user_counts else 0
+
+        median_requests = (max_requests + min_requests) / 2 if performers else 0
+
         error = round((max_requests / min_requests) if min_requests else 0, 2)
 
         date_list = [start_date + datetime.timedelta(days=i) for i in range(days)]
@@ -435,7 +504,8 @@ class RequestStatsAPIView(APIView):
             day_start = datetime.datetime(d.year, d.month, d.day, tzinfo=datetime.UTC)
             day_end = day_start + datetime.timedelta(days=1)
             counts_per_day[d.date()] = qs(
-                created_at__gte=day_start, created_at__lt=day_end
+                created_at__gte=day_start,
+                created_at__lt=day_end
             ).count()
 
         if period == "week":
@@ -454,7 +524,8 @@ class RequestStatsAPIView(APIView):
                 "acceptedRequests": accepted_requests,
                 "rejectedRequests": rejected_requests,
                 "awaitedRequests": awaited_requests,
-                "performers": len(performers_stats),
+                "performers": len(performers),
+                "medianBetweenMaxMin": median_requests,
             },
             "chart": chart,
             "workload": {

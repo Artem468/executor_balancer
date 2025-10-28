@@ -1,6 +1,5 @@
 import datetime
 import io
-from datetime import date
 
 from django.http import HttpResponse
 from drf_spectacular.utils import extend_schema, OpenApiParameter
@@ -87,18 +86,6 @@ class DailySummaryView(APIView):
 
         summary = DispatchLogs.daily_summary(start_date=start_date, end_date=end_date)
         return Response(summary)
-
-
-from datetime import date
-
-from drf_spectacular.utils import extend_schema, OpenApiParameter
-from rest_framework import status
-from rest_framework.response import Response
-from rest_framework.views import APIView
-
-from dispatcher.serializer import DispatchSerializer, DailySummaryQuerySerializer
-from .models import DispatchLogs
-from .tasks import dispatch_request
 
 
 class DispatcherView(APIView):
