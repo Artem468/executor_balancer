@@ -2,8 +2,6 @@ from typing import Dict, Any, List, Union, Tuple, Optional
 import datetime
 from dataclasses import dataclass
 
-from dispatcher.tasks import CandidateInfo
-
 
 @dataclass
 class ParamScore:
