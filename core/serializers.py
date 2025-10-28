@@ -36,7 +36,7 @@ class UserSerializer(serializers.Serializer):
 
 class RequestSerializer(serializers.Serializer):
     id = serializers.CharField(read_only=True)
-    user = serializers.CharField(required=False, allow_null=True)
+    user = serializers.CharField(required=False, allow_null=True, read_only=True)
     parent = serializers.CharField(required=False, allow_null=True)
     params = serializers.DictField(required=False)
     text = serializers.CharField(required=False, allow_blank=True)

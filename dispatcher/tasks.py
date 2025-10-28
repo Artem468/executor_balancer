@@ -53,13 +53,11 @@ def dispatch_request(self, data):
         height = sum(
             (v[1] if isinstance(v, (list, tuple)) and len(v) > 1 else 1)
             for k, v in req_params.items()
-            if user.params.get(k) == v[0]
+            if user.params.get(k) == v
         )
 
         heights.append({"id": user.id, "height": height, "daily_count": daily_count})
 
-    if not heights:
-        return {"status": "no suitable users"}
 
     max_height = max(heights, key=lambda h: h["height"])
 

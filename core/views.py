@@ -250,7 +250,7 @@ class RequestViewSet(viewsets.ViewSet):
                 },
             )
 
-            _ = dispatch_request.delay({"id": str(obj.id)})
+            task = dispatch_request.delay({"id": str(obj.id)})
 
             return Response(RequestSerializer(obj).data, status=201)
         return Response(serializer.errors, status=400)
