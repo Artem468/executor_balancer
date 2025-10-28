@@ -90,7 +90,7 @@ services:
 
   nginx:
     image: nginx:1.28
-    container_name: nginx
+    container_name: nginx_balancer
     depends_on:
       - django
     ports:

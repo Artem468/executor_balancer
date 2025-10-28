@@ -1,119 +1,158 @@
 import datetime
+import uuid
+from typing import Dict, List, Optional
+
 from asgiref.sync import async_to_sync
 from celery import shared_task
 from channels.layers import get_channel_layer
-from django.conf import settings
-from mongoengine import connect, disconnect
 
-from dispatcher.models import DispatchLogs
 from core.models import Request, User
+from dispatcher.models import DispatchLogs
+from .scoring import UserScorer, LoadBalancer
 
-THRESHOLD_PERCENT = 0.05
+
+class CandidateInfo:
+    def __init__(
+        self,
+        user_id: str,
+        total_score: float,
+        max_score: float,
+        daily_requests: int,
+        max_daily_requests: Optional[int],
+    ):
+        self.user_id = user_id
+        self.total_score = total_score
+        self.max_score = max_score
+        self.daily_requests = daily_requests
+        self.max_daily_requests = max_daily_requests
+        self.load_factor = LoadBalancer.calculate_load_factor(
+            daily_requests, max_daily_requests, total_score, max_score
+        )
+
+    def __lt__(self, other):
+        return self.load_factor < other.load_factor
 
 
-def match_param(user_value, req_value, operator="EQ"):
-    """Проверяет соответствие одного параметра пользователя и заявки по оператору."""
-    if user_value is None:
-        return False
-    if operator == "EQ":
-        return user_value == req_value
-    elif operator == "NE":
-        return user_value != req_value
-    elif operator == "GT":
-        return user_value > req_value
-    elif operator == "GTE":
-        return user_value >= req_value
-    elif operator == "LT":
-        return user_value < req_value
-    elif operator == "LTE":
-        return user_value <= req_value
-    elif operator == "ICONTAINS":
-        if not isinstance(user_value, str) or not isinstance(req_value, str):
-            return False
-        return req_value.lower() in user_value.lower()
-    return False
+def get_daily_request_counts() -> Dict[str, int]:
+    """Получает количество заявок за день для каждого пользователя"""
+    today = datetime.date.today()
+    today_start = datetime.datetime.combine(today, datetime.time.min).replace(
+        tzinfo=datetime.timezone.utc
+    )
+
+    pipeline = [
+        {"$match": {"status": "accept", "created_at": {"$gte": today_start}}},
+        {"$group": {"_id": "$user", "count": {"$sum": 1}}},
+    ]
+
+    counts = {}
+    for result in Request.objects.aggregate(*pipeline):
+        counts[str(result["_id"])] = result["count"]
+    return counts
 
 
 @shared_task(bind=True, max_retries=None, default_retry_delay=300)
-def dispatch_request(self, data):
-    """Распределение заявки с учётом value, operator и веса (height)."""
+def dispatch_request(
+    self, request_id: str, min_score_fraction: float = 0.7
+) -> Optional[str]:
+    """Распределяет заявку между пользователями с учетом их параметров и нагрузки"""
 
-    req_id = data.get("id")
-    if not req_id:
-        return {"error": "request_id not provided"}
+    try:
+        request = Request.objects.get(id=request_id)
+    except Request.DoesNotExist:
+        return None
 
-    request_obj = Request.objects(id=req_id).first()
-    if not request_obj:
-        return {"error": f"Request {req_id} not found"}
+    request_params = request.params or {}
 
-    req_parent_id = request_obj.parent.id if request_obj.parent else None
-    req_params = request_obj.params or {}
-    req_created_at = request_obj.created_at
-    req_updated_at = request_obj.updated_at
+    scorer = UserScorer(min_score_fraction=min_score_fraction)
+    daily_counts = get_daily_request_counts()
 
-    now = datetime.datetime.now(datetime.UTC)
+    candidates: List[CandidateInfo] = []
 
-    pipeline = [
-        {"$match": {"status": "processed", "created_at": {"$gte": now}}},
-        {"$group": {"_id": "$user", "daily_count": {"$sum": 1}}},
-    ]
-    user_counts = {doc["_id"]: doc["daily_count"] for doc in Request.objects.aggregate(*pipeline)}
+    for user in User.objects.all():
+        parameter_scores = scorer.calculate_parameter_scores(
+            user.params or {}, request_params
+        )
+        total_score, max_possible_score = scorer.calculate_total_score(parameter_scores)
 
-    heights = []
-    for user in User.objects.only("id", "params", "max_daily_requests"):
-        daily_count = user_counts.get(user.id, 0)
-        if user.max_daily_requests is not None and daily_count >= user.max_daily_requests:
+        if not scorer.is_suitable_candidate(total_score, max_possible_score):
             continue
 
-        total_height = 0
-        for key, param in req_params.items():
-            if not isinstance(param, dict):
+        daily_requests = daily_counts.get(str(user.id), 0)
+
+        if user.max_daily_requests and daily_requests >= user.max_daily_requests:
+            continue
+
+        candidates.append(
+            CandidateInfo(
+                str(user.id),
+                total_score,
+                max_possible_score,
+                daily_requests,
+                user.max_daily_requests,
+            )
+        )
+
+    if not candidates:
+        fallback_candidates = []
+        for user in User.objects.all():
+            daily_requests = daily_counts.get(str(user.id), 0)
+
+            if user.max_daily_requests and daily_requests >= user.max_daily_requests:
                 continue
-            req_value = param.get("value")
-            operator = param.get("operator", "EQ")
-            weight = float(param.get("height", 1.0))
 
-            user_value = user.params.get(key)
-            if match_param(user_value, req_value, operator):
-                total_height += weight
+            fallback_candidates.append(
+                UserScorer.create_fallback_candidate(
+                    str(user.id), daily_requests, user.max_daily_requests
+                )
+            )
 
-        if total_height > 0:
-            heights.append({
-                "id": user.id,
-                "height": total_height,
-                "daily_count": daily_count
-            })
+        if not fallback_candidates:
+            return None
 
-    if not heights:
-        raise self.retry(countdown=60)
+        best_candidate = min(fallback_candidates)
+    else:
+        best_candidate = min(candidates)
 
-    max_height = max(heights, key=lambda h: h["height"])["height"]
-    candidates = [
-        h for h in heights if max_height - h["height"] <= max_height * THRESHOLD_PERCENT
-    ]
-    most_relevant_user = min(candidates, key=lambda h: h["daily_count"])
+    best_user_id = best_candidate.user_id
 
-    user_id = most_relevant_user["id"]
-    user_obj = User.objects(id=user_id).first()
-    Request.objects(id=req_id).update(set__user=user_obj)
+    best_user = User.objects.get(id=best_user_id)
 
-    DispatchLogs(
-        request_id=req_id,
-        parent_id=req_parent_id,
-        task_id=self.request.id,
-        request_created_at=req_created_at,
-        request_updated_at=req_updated_at,
-    ).save()
+    request.user = best_user
+    request.updated_at = datetime.datetime.now(datetime.UTC)
+    request.save()
+
+    parent_id = str(request.parent.id) if request.parent else None
+    DispatchLogs.objects.create(
+        request_id=str(request.id),
+        task_id=uuid.UUID(self.request.id),
+        parent_id=parent_id,
+        request_created_at=request.created_at,
+        request_updated_at=request.updated_at,
+    )
+
+    # print(
+    #     {
+    #         "total_candidates": len(candidates),
+    #         "chosen_candidate": {
+    #             "user_id": str(best_user_id),
+    #             "daily_requests": best_candidate.daily_requests,
+    #             "score": best_candidate.total_score,
+    #             "max_score": best_candidate.max_score,
+    #             "load_factor": best_candidate.load_factor,
+    #         },
+    #     }
+    # )
 
     channel_layer = get_channel_layer()
     async_to_sync(channel_layer.group_send)(
         "dispatched",
         {
             "type": "request_dispatched",
-            "request_id": req_id,
-            "user": user_obj.username,
+            "request_id": str(request.id),
+            "user": str(best_user_id),
             "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
         },
     )
 
-    return {"assigned_user": str(user_id)}
+    return str(best_user_id)

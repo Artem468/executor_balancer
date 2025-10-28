@@ -1,13 +1,10 @@
 import datetime
-import statistics
 import time
 
 import redis
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.conf import settings
-from django.db.models import Count
-from django.utils import timezone
 from drf_spectacular.utils import extend_schema, OpenApiResponse, OpenApiParameter
 from mongoengine import DoesNotExist
 from pymongo import MongoClient
@@ -236,7 +233,7 @@ class UserViewSet(viewsets.GenericViewSet):
         description="Возвращает список заявок для пользователя",
         responses={200: OpenApiResponse(description="Список заявок на пользователя")}
     )
-    @action(detail=True, methods=["get"], url_path="dispatched")
+    @action(detail=True, methods=["get"], url_path="dispatched-requests")
     def dispatched_by_user(self, request, pk=None):
         """
         Возвращает данные конкретного пользователя:
@@ -318,7 +315,7 @@ class RequestViewSet(viewsets.ViewSet):
                 },
             )
 
-            _ = dispatch_request.delay({"id": str(obj.id)})
+            _ = dispatch_request.delay(str(obj.id))
 
             return Response(RequestSerializer(obj).data, status=201)
         return Response(serializer.errors, status=400)
@@ -451,18 +448,20 @@ class KeyDataTypesViewSet(viewsets.ViewSet):
     parameters=[
         OpenApiParameter(
             name="period",
-            description="Период: 'week' или 'month'",
+            description="Период статистики: 'week' (7 дней), 'month' (30 дней), 'hours' (24 часа)",
             required=True,
             type=str,
-            enum=["week", "month"],
+            enum=["week", "month", "hours"],
         )
     ],
+    responses={200: OpenApiResponse(description="Статистика заявок")},
 )
 class RequestStatsAPIView(APIView):
     """
-    Возвращает статистику заказов за период.
-    GET-параметр:
-      - period: "week" или "month"
+    Возвращает статистику заявок:
+
+    Параметр GET:
+      - period: "week" | "month" | "hours"
     """
 
     def get(self, request):
@@ -470,16 +469,17 @@ class RequestStatsAPIView(APIView):
         now = datetime.datetime.now(datetime.UTC)
 
         if period == "week":
-            days = 7
+            start_date = now - datetime.timedelta(days=7)
         elif period == "month":
-            days = 30
+            start_date = now - datetime.timedelta(days=30)
+        elif period == "hours":
+            start_date = now - datetime.timedelta(hours=24)
         else:
             return Response(
-                {"error": "period должен быть 'week' или 'month'"},
-                status=400
+                {"error": "period должен быть 'week', 'month' или 'hours'"},
+                status=400,
             )
 
-        start_date = now - datetime.timedelta(days=days - 1)
         qs = Request.objects(created_at__gte=start_date, created_at__lte=now)
 
         total_requests = qs.count()
@@ -490,32 +490,43 @@ class RequestStatsAPIView(APIView):
 
         performers = qs(user__ne=None).distinct("user")
         user_counts = [qs(user=u).count() for u in performers] if performers else []
-
         max_requests = max(user_counts) if user_counts else 0
         min_requests = min(user_counts) if user_counts else 0
+        median_requests = (max_requests + min_requests) / 2 if user_counts else 0
+        error = round((max_requests / min_requests), 2) if min_requests else 0
 
-        median_requests = (max_requests + min_requests) / 2 if performers else 0
+        if period in ("week", "month"):
+            days = (now - start_date).days
+            date_list = [now - datetime.timedelta(days=i) for i in range(days)][::-1]
 
-        error = round((max_requests / min_requests) if min_requests else 0, 2)
+            chart_data = []
+            for d in date_list:
+                day_start = datetime.datetime(
+                    d.year, d.month, d.day, tzinfo=datetime.UTC
+                )
+                day_end = day_start + datetime.timedelta(days=1)
+                chart_data.append(
+                    qs(created_at__gte=day_start, created_at__lt=day_end).count()
+                )
 
-        date_list = [start_date + datetime.timedelta(days=i) for i in range(days)]
-        counts_per_day = {}
-        for d in date_list:
-            day_start = datetime.datetime(d.year, d.month, d.day, tzinfo=datetime.UTC)
-            day_end = day_start + datetime.timedelta(days=1)
-            counts_per_day[d.date()] = qs(
-                created_at__gte=day_start,
-                created_at__lt=day_end
-            ).count()
+            labels = (
+                ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
+                if period == "week"
+                else [d.strftime("%d.%m") for d in date_list]
+            )
 
-        if period == "week":
-            labels = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
-            values = [counts_per_day.get(d.date(), 0) for d in date_list]
         else:
-            labels = [d.strftime("%d.%m") for d in date_list]
-            values = [counts_per_day.get(d.date(), 0) for d in date_list]
+            chart_data = []
+            labels = []
+            for i in range(24):
+                hour_start = now - datetime.timedelta(hours=(24 - i))
+                hour_end = hour_start + datetime.timedelta(hours=1)
+                labels.append(hour_start.strftime("%H:%M"))
+                chart_data.append(
+                    qs(created_at__gte=hour_start, created_at__lt=hour_end).count()
+                )
 
-        chart = {"labels": labels, "values": values}
+        chart = {"labels": labels, "values": chart_data}
 
         data = {
             "stats": {

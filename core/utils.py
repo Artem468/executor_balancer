@@ -32,7 +32,7 @@ def cast_param_value(value, type_name: str):
             return datetime.datetime.fromisoformat(value)
         except Exception:
             raise ValidationError(f"Некорректный формат даты: {value}")
-    return str(value)  # fallback
+    return str(value)
 
 
 def validate_and_cast_params(params: dict) -> dict:
@@ -53,7 +53,7 @@ def validate_and_cast_params(params: dict) -> dict:
         operator = param.get("operator", "EQ")
         height = param.get("height", 1.0)
 
-        if operator.upper() not in ["EQ", "GT", "LT", "GTE", "LTE", "ICONTAINS"]:
+        if operator.upper() not in ["EQ", "GT", "LT", "GTE", "LTE", "NE", "ICONTAINS"]:
             raise ValidationError("Не поддерживаемый operator")
 
         type_name = key_types.get(key, "string")
